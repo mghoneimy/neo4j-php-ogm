@@ -123,17 +123,6 @@ class UnitOfWork
     //------------------------------------------------------------------------------------------------------------------
 
     /**
-     * This map stores entities objects against their hashed object id's, it serves as the identity map for the UoW
-     * [oid] -> Entity object
-     *
-     * @var array
-     */
-    private $nodesMap = [];
-
-    //------------------------------------------------------------------------------------------------------------------
-    //------------------------------------------------------------------------------------------------------------------
-
-    /**
      * This map stores the node graph id against the hashed object's id
      * [oid] -> gid
      *
@@ -145,6 +134,8 @@ class UnitOfWork
      * This map stores entities objects against their node graph id's
      * [gid] -> Entity object
      *
+     * This map represents the identity map, tracking all managed nodes
+     *
      * @var array
      */
     private $nodesByGId = [];
@@ -155,7 +146,7 @@ class UnitOfWork
      *
      * @var array
      */
-    private $reEntitiesGIds = [];
+    private $relEntitiesGIds = [];
 
     /**
      * This map stores relationship entities objects against their node graph id's
@@ -163,7 +154,7 @@ class UnitOfWork
      *
      * @var array
      */
-    private $reEntitiesByGId = [];
+    private $relEntitiesByGId = [];
 
     //------------------------------------------------------------------------------------------------------------------
     //------------------------------------------------------------------------------------------------------------------
@@ -171,6 +162,8 @@ class UnitOfWork
     /**
      * This map stores the last retrieved object for the node from the database against its graph id
      * [gid] -> Entity object
+     *
+     * Every managed node in the identity map MUST have a value with the same key here
      *
      * @var array
      */
@@ -208,6 +201,15 @@ class UnitOfWork
 
     //------------------------------------------------------------------------------------------------------------------
     //------------------------------------------------------------------------------------------------------------------
+
+    /**
+     * This map stores entities objects against their hashed object id's, it serves as the identity map for the UoW
+     * [oid] -> Entity object
+     *
+     * @var array
+     */
+    // TODO: Remove this, it's pointless, not getting read anywhere
+    private $nodesMap = [];
 
     /**
      * I really don't know what this is. It seems to storeoriginal node data, but then it also stores rel entity data
@@ -314,134 +316,53 @@ class UnitOfWork
     }
 
     /**
-     * This method does the actual persistence of objects in the UoW. It does the following:
-     * 1- Add object to the hashesMap using its hashed object id
-     * 2- Marks object as visited
-     * 3- Adds object to the nodes scheduled for creation if it's new
-     * 4- Cascade persists simple node relationships
-     * 5- Cascade persists node relationship entities
+     * Merges the state of the given detached entity into this UnitOfWork.
      *
-     * @param       $entity :Entity to be persisted in the UoW, can be node or relationship entity
-     * @param array $visited
+     * @param object $entity
      *
-     * @throws \Exception
+     * @return object The managed copy of the entity
      */
-    public function doPersist($entity, array &$visited)
+    public function merge($entity)
     {
-        // Calculates object hashed id and save the object in the map using the id as index
-        $oid                  = spl_object_hash($entity);
-        $this->nodesMap[$oid] = $entity;
-
-        // If node has been visited before during this persist routine, do nothing
-        if (isset($visited[$oid])) {
-            return;
-        }
-
-        // Set the object as visited in the current persistence routine
-        $visited[$oid] = $entity;
-        $entityState = $this->getEntityState($entity, self::STATE_NEW);
-
-        switch ($entityState) {
-            case self::STATE_MANAGED:
-                //$this->nodesScheduledForUpdate[$oid] = $entity;
-                break;
-            case self::STATE_NEW:
-                $this->nodesScheduledForCreate[$oid] = $entity;
-                break;
-            case self::STATE_DELETED:
-                throw new \LogicException(sprintf('Node has been deleted'));
-        }
-
-        $this->cascadePersist($entity, $visited);
-        $this->traverseRelationshipEntities($entity, $visited);
+        // TODO write me
+        trigger_error('Function not implemented.', E_USER_ERROR);
     }
 
     /**
-     * Cascade persist in node entity relationships by:
-     * 1- Traversing all simple relationship associations
-     * 2- Persisting all relationships
+     * Detaches an entity from the persistence management. It's persistence will
+     * no longer be managed by Doctrine.
      *
-     * @param       $entity
-     * @param array $visited
-     *
-     * @throws \Exception
+     * @param object $entity The entity to detach
      */
-    public function cascadePersist($entity, array &$visited)
+    public function detach($entity)
     {
-        // Retrieve simple relationships (Non-entity relationships) from class meta data
-        $classMetadata = $this->entityManager->getClassMetadataFor(get_class($entity));
-        $associations = $classMetadata->getSimpleRelationships();
+        $visited = [];
 
-        foreach ($associations as $association) {
-
-            // Get association object
-            $value = $association->getValue($entity);
-            if ($value instanceof LazyCollection) {
-
-                // If association is a lazy one, add without fetch
-                $value = $value->getAddWithoutFetch();
-            }
-            if (is_array($value) || $value instanceof ArrayCollection || $value instanceof Collection) {
-
-                // If association is a collection but not lazy, persist all relationships
-                foreach ($value as $assoc) {
-                    $this->persistRelationship($entity, $assoc, $association, $visited);
-                }
-            } else {
-
-                // If association is not a collection at all, just a node
-                $entityB = $association->getValue($entity);
-                if (is_object($entityB)) {
-                    $this->persistRelationship($entity, $entityB, $association, $visited);
-                }
-            }
-        }
+        $this->doDetach($entity, $visited);
     }
 
     /**
-     * This method persists one relationship between two nodes by:
-     * 1- Adding the relationship nodes, metadata, and propery name to the relationshipScheduled for creation
-     * 2- Persisting the nodes at the other end of the relationship recursively
+     * Refreshes the state of the given entity from the database, overwriting
+     * any local, unpersisted changes.
      *
-     * @param                      $entityA
-     * @param                      $entityB
-     * @param RelationshipMetadata $relationship
-     * @param array                $visited
-     *
-     * @throws \Exception
+     * @param object $entity The entity to refresh
      */
-    public function persistRelationship($entityA, $entityB, RelationshipMetadata $relationship, array &$visited)
+    public function refresh($entity)
     {
-        // Check entityB is a single node or a collection
-        // I don't understand why nodeB would be a collection!
-        // Seems that this is part of the fix to capture updates that happen on relationships
-        if ($entityB instanceof Collection || $entityB instanceof ArrayCollection) {
-            foreach ($entityB as $e) {
+        $visited = [];
 
-                // I really don't understand what's happening here
-                $aMeta = $this->entityManager->getClassMetadataFor(get_class($entityA));
-                $bMeta = $this->entityManager->getClassMetadataFor(get_class($entityB));
-                $type = $relationship->isRelationshipEntity() ? $this->entityManager->getRelationshipEntityMetadata($relationship->getRelationshipEntityClass())->getType() : $relationship->getType();
-                $hashStr = $aMeta->getIdValue($entityA).$bMeta->getIdValue($entityB).$type.$relationship->getDirection();
-                $hash = md5($hashStr);
+        $this->doRefresh($entity, $visited);
+    }
 
-                // Why are we searching with the hash if we never insert with as index hash?
-                if (!array_key_exists($hash, $this->relationshipsScheduledForCreate)) {
-                    $this->relationshipsScheduledForCreate[] = [$entityA, $relationship, $e, $relationship->getPropertyName()];
-                }
-
-                // Persist recursively for the entityB (the node at the other end of the relationship)
-                $this->doPersist($e, $visited);
-            }
-
-            return;
-        }
-
-        // Persist recursively entityB (the node at the other end of the relationship)
-        $this->doPersist($entityB, $visited);
-
-        // Add relationship for scheduled for create relationships
-        $this->relationshipsScheduledForCreate[] = [$entityA, $relationship, $entityB, $relationship->getPropertyName()];
+    /**
+     * Helper method to initialize a lazy loading proxy or persistent collection.
+     *
+     * @param object $obj
+     */
+    public function initializeObject($obj)
+    {
+        // TODO write me
+        trigger_error('Function not implemented.', E_USER_ERROR);
     }
 
     /**
@@ -521,6 +442,18 @@ class UnitOfWork
             $relStack->push($statement->text(), $statement->parameters(), $statement->getTag());
         }
 
+        // Append created relationship references to the managed relationships map
+        foreach ($this->relationshipsScheduledForCreate as $rel) {
+            $aoid                                   = spl_object_hash($rel[0]);
+            $boid                                   = spl_object_hash($rel[2]);
+            $field                                  = $rel[3];
+            $this->managedRelsRefs[$aoid][$field][] = [
+                'entity' => $aoid,
+                'target' => $boid,
+                'rel' => $rel[1],
+            ];
+        }
+
         //--------------------------------------------------------------------------------------------------------------
         // Delete relationships scheduled for deletion on the graph
         if (count($this->relationshipsScheduledForDelete) > 0) {
@@ -535,6 +468,8 @@ class UnitOfWork
         }
 
         $tx->runStack($relStack);
+
+        // Remove references from relationships refs?
 
         //--------------------------------------------------------------------------------------------------------------
         // Create relationship entities scheduled for creation on the graph
@@ -575,8 +510,8 @@ class UnitOfWork
             foreach ($result->records() as $record) {
                 $oid = $record->get('oid');
                 $this->relationshipEntityStates[$record->get('oid')] = self::STATE_DELETED;
-                $id = $this->reEntitiesGIds[$oid];
-                unset($this->reEntitiesGIds[$oid], $this->reEntitiesByGId[$id]);
+                $id = $this->relEntitiesGIds[$oid];
+                unset($this->relEntitiesGIds[$oid], $this->relEntitiesByGId[$id]);
             }
         }
 
@@ -606,23 +541,12 @@ class UnitOfWork
 
         $tx->commit();
 
-        //--------------------------------------------------------------------------------------------------------------
-        // ??
-        foreach ($this->relationshipsScheduledForCreate as $rel) {
-            $aoid                                   = spl_object_hash($rel[0]);
-            $boid                                   = spl_object_hash($rel[2]);
-            $field                                  = $rel[3];
-            $this->managedRelsRefs[$aoid][$field][] = [
-                'entity' => $aoid,
-                'target' => $boid,
-                'rel' => $rel[1],
-            ];
-        }
-
+        // Update deleted nodes states' in the entity states map
         foreach ($possiblyDeleted as $oid) {
             $this->entityStates[$oid] = self::STATE_DELETED;
         }
 
+        //--------------------------------------------------------------------------------------------------------------
         // postFlush
         if ($this->eventManager->hasListeners(Events::POST_FLUSH)) {
             $this->eventManager->dispatchEvent(Events::POST_FLUSH, new Event\PostFlushEventArgs($this->entityManager));
@@ -641,28 +565,57 @@ class UnitOfWork
             = [];
     }
 
-    /**
-     * @throws \Exception
-     */
-    public function detectEntityChanges()
-    {
-        $managed = [];
-        foreach ($this->entityStates as $oid => $state) {
-            if ($state === self::STATE_MANAGED) {
-                $managed[] = $oid;
-            }
-        }
+    //------------------------------------------------------------------------------------------------------------------
+    //------------------------------------------------------------------------------------------------------------------
+    //------------------------------------------------------------------------------------------------------------------
 
-        foreach ($managed as $oid) {
-            $id = $this->nodesGIds[$oid];
-            $entityA = $this->nodesByGId[$id];
-            $visited = [];
-            $this->doPersist($entityA, $visited);
-            $entityB = $this->managedNodesVersion[$id];
-            $this->computeChanges($entityA, $entityB);
-        }
+    /**
+     * @param Node $node
+     * @param      $className
+     * @param      $id
+     *
+     * @return mixed|object
+     */
+    public function createEntity(Node $node, $className, $id)
+    {
+        /** todo receive a data of object instead of node object */
+        $classMetadata = $this->entityManager->getClassMetadataFor($className);
+        $entity = $this->newInstance($classMetadata, $node);
+        $oid = spl_object_hash($entity);
+        $this->originalEntityData[$oid] = $node->values();
+        $classMetadata->setId($entity, $id);
+        $this->addManaged($entity);
+
+        return $entity;
     }
 
+    /**
+     * @param Relationship $relationship
+     * @param              $className
+     * @param              $sourceEntity
+     * @param              $field
+     *
+     * @return object
+     * @throws \Exception
+     */
+    public function createRelationshipEntity(Relationship $relationship, $className, $sourceEntity, $field)
+    {
+        $classMetadata = $this->entityManager->getClassMetadataFor($className);
+        $o = $classMetadata->newInstance();
+        $oid = spl_object_hash($o);
+        $this->originalEntityData[$oid] = $relationship->values();
+        $classMetadata->setId($o, $relationship->identity());
+        $this->addManagedRelationshipEntity($o, $sourceEntity, $field);
+
+        return $o;
+    }
+
+    /**
+     * @param                      $entityA
+     * @param                      $entityB
+     * @param                      $field
+     * @param RelationshipMetadata $relationship
+     */
     public function addManagedRelationshipReference($entityA, $entityB, $field, RelationshipMetadata $relationship)
     {
         $aoid                                   = spl_object_hash($entityA);
@@ -676,220 +629,20 @@ class UnitOfWork
         $this->addManaged($entityB);
     }
 
-    public function detectRelationshipEntityChanges()
+    /**
+     * @param int $id
+     *
+     * @return object|null
+     */
+    public function getEntityById($id)
     {
-        $managed = [];
-        foreach ($this->relationshipEntityStates as $oid => $state) {
-            if ($state === self::STATE_MANAGED) {
-                $managed[] = $oid;
-            }
-        }
-
-        foreach ($managed as $oid) {
-            $reA = $this->reEntitiesByGId[$this->reEntitiesGIds[$oid]];
-            $reB = $this->managedRelEntitiesVersion[$this->reEntitiesGIds[$oid]];
-            $this->computeRelationshipEntityChanges($reA, $reB);
-//            $this->checkRelationshipEntityDeletions($reA);
-        }
-    }
-
-    public function addManagedRelationshipEntity($entity, $pointOfView, $field)
-    {
-        $id                                                 = $this->entityManager->getRelationshipEntityMetadata(get_class($entity))->getIdValue($entity);
-        $oid                                                = spl_object_hash($entity);
-        $this->relationshipEntityStates[$oid]               = self::STATE_MANAGED;
-        $ref                                                = clone $entity;
-        $this->reEntitiesByGId[$id]                         = $entity;
-        $this->reEntitiesGIds[$oid]                         = $id;
-        $this->managedRelEntitiesVersion[$id]               = $ref;
-        $poid                                               = spl_object_hash($pointOfView);
-        $this->managedRelationshipEntities[$poid][$field][] = $oid;
-        $this->managedRelationshipEntitiesMap[$oid][$poid]  = $field;
-        $this->reEntitiesOriginalData[$oid]                         = $this->getOriginalRelationshipEntityData($entity);
-    }
-
-    public function getRelationshipEntityById($id)
-    {
-        if (array_key_exists($id, $this->reEntitiesByGId)) {
-            return $this->reEntitiesByGId[$id];
-        }
-
-        return null;
-    }
-
-    public function detectRelationshipReferenceChanges()
-    {
-        foreach ($this->managedRelsRefs as $oid => $reference) {
-            $entity = $this->nodesByGId[$this->nodesGIds[$oid]];
-            foreach ($reference as $field => $info) {
-                /** @var RelationshipMetadata $relMeta */
-                $relMeta = $info[0]['rel'];
-                $value = $relMeta->getValue($entity);
-                if ($value instanceof ArrayCollection || $value instanceof AbstractLazyCollection) {
-                    $value = $value->toArray();
-                }
-                if (is_array($value)) {
-                    $currentValue = array_map(function ($ref) {
-                        return $this->nodesByGId[$this->nodesGIds[$ref['target']]];
-                    }, $info);
-
-                    $compare = function ($a, $b) {
-                        if ($a === $b) {
-                            return 0;
-                        }
-
-                        return $a < $b ? -1 : 1;
-                    };
-
-                    $added = array_udiff($value, $currentValue, $compare);
-                    $removed = array_udiff($currentValue, $value, $compare);
-
-                    foreach ($added as $add) {
-                        // Since this is the same property, it should be ok to re-use the first relationship
-                        $this->scheduleRelationshipReferenceForCreate($entity, $add, $info[0]['rel']);
-                    }
-                    foreach ($removed as $remove) {
-                        $this->scheduleRelationshipReferenceForDelete($entity, $remove, $info[0]['rel']);
-                    }
-                } elseif (is_object($value)) {
-                    $target = $this->nodesByGId[$this->nodesGIds[$info[0]['target']]];
-                    if ($value !== $target) {
-                        $this->scheduleRelationshipReferenceForDelete($entity, $target, $info[0]['rel']);
-                        $this->scheduleRelationshipReferenceForCreate($entity, $value, $info[0]['rel']);
-                    }
-                } elseif ($value === null) {
-                    foreach ($info as $ref) {
-                        $target = $this->nodesByGId[$this->nodesGIds[$ref['target']]];
-                        $this->scheduleRelationshipReferenceForDelete($entity, $target, $ref['rel']);
-                    }
-                }
-            }
-        }
-
-    }
-
-    public function scheduleRelationshipReferenceForCreate($entity, $target, RelationshipMetadata $relationship)
-    {
-        $this->relationshipsScheduledForCreate[] = [$entity, $relationship, $target, $relationship->getPropertyName()];
-    }
-
-    public function scheduleRelationshipReferenceForDelete($entity, $target, RelationshipMetadata $relationship)
-    {
-        $this->relationshipsScheduledForDelete[] = [$entity, $relationship, $target, $relationship->getPropertyName()];
+        return isset($this->nodesByGId[$id]) ? $this->nodesByGId[$id] : null;
     }
 
     /**
-     * This method traverses relationship entities doing the following:
-     * 1- Loop over all relationship entities linked to the node
-     * 2- Persist all relationship entities
-     * 3- Persist the node on the other end of the relationship entity
-     *
-     * @param       $entity
-     * @param array $visited
-     *
-     * @throws \Exception
+     * @param      $entity
+     * @param bool $detachRelationships
      */
-    public function traverseRelationshipEntities($entity, array &$visited = [])
-    {
-        // Loop over all relationship entities tied to the node entity
-        $classMetadata = $this->entityManager->getClassMetadataFor(get_class($entity));
-        foreach ($classMetadata->getRelationshipEntities() as $relationshipMetadata) {
-            $value = $relationshipMetadata->getValue($entity);
-
-            // Skip empty relationship entities
-            if (null === $value || ($relationshipMetadata->isCollection() && count($value) === 0)) {
-                continue;
-            }
-            if ($relationshipMetadata->isCollection()) {
-                foreach ($value as $v) {
-
-                    // Persist relationship entity
-                    $this->persistRelationshipEntity($v, get_class($entity));
-
-                    // Get property that maps to the node at the other ned of the relationship
-                    // My guess is that this: persists recursively entityB (the node at the other end of the relationship)
-                    $rem = $this->entityManager->getRelationshipEntityMetadata(get_class($v));
-                    $toPersistProperty = $rem->getStartNode() === $classMetadata->getClassName() ? $rem->getEndNodeValue($v) : $rem->getStartNodeValue($v);
-                    $this->doPersist($toPersistProperty, $visited);
-                }
-            } else {
-
-                // Persist relationship entity
-                $this->persistRelationshipEntity($value, get_class($entity));
-
-                // Get property that maps to the node at the other ned of the relationship
-                // My guess is that this: persists recursively entityB (the node at the other end of the relationship)
-                $rem = $this->entityManager->getRelationshipEntityMetadata(get_class($value));
-                $toPersistProperty = $rem->getStartNode() === $classMetadata->getClassName() ? $rem->getEndNodeValue($value) : $rem->getStartNodeValue($value);
-                $this->doPersist($toPersistProperty, $visited);
-            }
-        }
-    }
-
-    /**
-     * @param $entity :RelationshipEntity object
-     * @param $pov    :Entity representing node linked to RelationshipEntity
-     */
-    public function persistRelationshipEntity($entity, $pov)
-    {
-        $oid = spl_object_hash($entity);
-
-        if (!array_key_exists($oid, $this->relationshipEntityStates)) {
-            $this->relEntitiesScheduledForCreate[$oid] = [$entity, $pov];
-            $this->relationshipEntityStates[$oid] = self::STATE_NEW;
-        }
-    }
-
-    public function getEntityState($entity, $assumedState = null)
-    {
-        $oid = spl_object_hash($entity);
-
-        // Check if object already has a state
-        if (isset($this->entityStates[$oid])) {
-            return $this->entityStates[$oid];
-        }
-
-        // Return assumed state as the object's state if it doesn't exist in the UoW's tracked entity states
-        if (null !== $assumedState) {
-            return $assumedState;
-        }
-
-        // Attempt to retrieve object id from its meta data
-        $id = $this->entityManager->getClassMetadataFor(get_class($entity))->getIdValue($entity);
-
-        // If object doesn't have an id (yet), then it's new
-        if (!$id) {
-            return self::STATE_NEW;
-        }
-
-        // If the object doesn't have a state in the tracked entity states, but does have an id value, then it's detached
-        return self::STATE_DETACHED;
-    }
-
-    public function addManaged($entity)
-    {
-        $oid = spl_object_hash($entity);
-        $classMetadata = $this->entityManager->getClassMetadataFor(get_class($entity));
-        $id = $classMetadata->getIdValue($entity);
-        if (null === $id) {
-            throw new \LogicException('Entity marked for managed but could not find identity');
-        }
-        $this->entityStates[$oid] = self::STATE_MANAGED;
-        $this->nodesGIds[$oid]    = $id;
-        $this->nodesByGId[$id]    = $entity;
-        $this->manageEntityReference($oid);
-    }
-
-    /**
-     * @param object $entity
-     *
-     * @return bool
-     */
-    public function isManaged($entity)
-    {
-        return isset($this->nodesGIds[spl_object_hash($entity)]);
-    }
-
     public function scheduleDelete($entity, $detachRelationships = false)
     {
         if ($this->isNodeEntity($entity)) {
@@ -911,125 +664,6 @@ class UnitOfWork
     }
 
     /**
-     * @param int $id
-     *
-     * @return object|null
-     */
-    public function getEntityById($id)
-    {
-        return isset($this->nodesByGId[$id]) ? $this->nodesByGId[$id] : null;
-    }
-
-    /**
-     * @param $class
-     *
-     * @return Persister\EntityPersister
-     */
-    public function getPersister($class)
-    {
-        if (!array_key_exists($class, $this->nodePersisters)) {
-            $classMetadata                = $this->entityManager->getClassMetadataFor($class);
-            $this->nodePersisters[$class] = new EntityPersister($this->entityManager, $class, $classMetadata);
-        }
-
-        return $this->nodePersisters[$class];
-    }
-
-    /**
-     * @param $class
-     *
-     * @return \GraphAware\Neo4j\OGM\Persister\RelationshipEntityPersister
-     * @throws \Exception
-     */
-    public function getRelationshipEntityPersister($class)
-    {
-        if (!array_key_exists($class, $this->relationshipEntityPersisters)) {
-            $classMetadata = $this->entityManager->getRelationshipEntityMetadata($class);
-            $this->relationshipEntityPersisters[$class] = new RelationshipEntityPersister($this->entityManager, $class, $classMetadata);
-        }
-
-        return $this->relationshipEntityPersisters[$class];
-    }
-
-    public function hydrateGraphId($oid, $gid)
-    {
-        $refl0 = new \ReflectionObject($this->nodesScheduledForCreate[$oid]);
-        $p = $refl0->getProperty('id');
-        $p->setAccessible(true);
-        $p->setValue($this->nodesScheduledForCreate[$oid], $gid);
-    }
-
-    public function hydrateRelationshipEntityId($oid, $gid)
-    {
-        $refl0 = new \ReflectionObject($this->relEntitiesScheduledForCreate[$oid][0]);
-        $p = $refl0->getProperty('id');
-        $p->setAccessible(true);
-        $p->setValue($this->relEntitiesScheduledForCreate[$oid][0], $gid);
-        $this->reEntitiesGIds[$oid]            = $gid;
-        $this->reEntitiesByGId[$gid]           = $this->relEntitiesScheduledForCreate[$oid][0];
-        $this->managedRelEntitiesVersion[$gid] = clone $this->relEntitiesScheduledForCreate[$oid][0];
-        $this->reEntitiesOriginalData[$oid]    = $this->getOriginalRelationshipEntityData($this->relEntitiesScheduledForCreate[$oid][0]);
-    }
-
-    /**
-     * Merges the state of the given detached entity into this UnitOfWork.
-     *
-     * @param object $entity
-     *
-     * @return object The managed copy of the entity
-     */
-    public function merge($entity)
-    {
-        // TODO write me
-        trigger_error('Function not implemented.', E_USER_ERROR);
-    }
-
-    /**
-     * Detaches an entity from the persistence management. It's persistence will
-     * no longer be managed by Doctrine.
-     *
-     * @param object $entity The entity to detach
-     */
-    public function detach($entity)
-    {
-        $visited = [];
-
-        $this->doDetach($entity, $visited);
-    }
-
-    /**
-     * Refreshes the state of the given entity from the database, overwriting
-     * any local, unpersisted changes.
-     *
-     * @param object $entity The entity to refresh
-     */
-    public function refresh($entity)
-    {
-        $visited = [];
-
-        $this->doRefresh($entity, $visited);
-    }
-
-    /**
-     * Helper method to initialize a lazy loading proxy or persistent collection.
-     *
-     * @param object $obj
-     */
-    public function initializeObject($obj)
-    {
-        // TODO write me
-        trigger_error('Function not implemented.', E_USER_ERROR);
-    }
-
-    /**
-     * @return array
-     */
-    public function getNodesScheduledForCreate()
-    {
-        return $this->nodesScheduledForCreate;
-    }
-
-    /**
      * @param object $entity
      *
      * @return bool
@@ -1037,22 +671,6 @@ class UnitOfWork
     public function isScheduledForCreate($entity)
     {
         return isset($this->nodesScheduledForCreate[spl_object_hash($entity)]);
-    }
-
-    /**
-     * @return array
-     */
-    public function getNodesScheduledForUpdate()
-    {
-        return $this->nodesScheduledForUpdate;
-    }
-
-    /**
-     * @return array
-     */
-    public function getNodesScheduledForDelete()
-    {
-        return $this->nodesScheduledForDelete;
     }
 
     /**
@@ -1066,168 +684,163 @@ class UnitOfWork
     }
 
     /**
-     * @return array
-     */
-    public function getRelationshipsScheduledForCreate()
-    {
-        return $this->relationshipsScheduledForCreate;
-    }
-
-    /**
-     * @return array
-     */
-    public function getRelationshipsScheduledForDelete()
-    {
-        return $this->relationshipsScheduledForDelete;
-    }
-
-    /**
-     * @return array
-     */
-    public function getRelEntitiesScheduledForCreate()
-    {
-        return $this->relEntitiesScheduledForCreate;
-    }
-
-    /**
-     * @return array
-     */
-    public function getRelEntitiesScheduledForUpdate()
-    {
-        return $this->relEntitiesScheduledForUpdate;
-    }
-
-    /**
-     * @return array
-     */
-    public function getRelEntitiesScheduledForDelete()
-    {
-        return $this->relEntitiesScheduledForDelete;
-    }
-
-    /**
-     * Get the original state of an entity when it was loaded from the database.
+     * @param object $entity
      *
-     * @param int $gid
-     *
-     * @return object|null
+     * @return bool
      */
-    public function getOriginalEntityState($gid)
+    public function isManaged($entity)
     {
-        if (isset($this->managedNodesVersion[$gid])) {
-            return $this->managedNodesVersion[$gid];
+        return isset($this->nodesGIds[spl_object_hash($entity)]);
+    }
+
+    //------------------------------------------------------------------------------------------------------------------
+    //------------------------------------------------------------------------------------------------------------------
+    //------------------------------------------------------------------------------------------------------------------
+
+    /**
+     * This method does the actual persistence of objects in the UoW. It does the following:
+     * 1- Add object to the hashesMap using its hashed object id
+     * 2- Marks object as visited
+     * 3- Adds object to the nodes scheduled for creation if it's new
+     * 4- Cascade persists simple node relationships
+     * 5- Cascade persists node relationship entities
+     *
+     * @param       $entity :Entity to be persisted in the UoW, can be node or relationship entity
+     * @param array $visited
+     *
+     * @throws \Exception
+     */
+    private function doPersist($entity, array &$visited)
+    {
+        // Calculates object hashed id and save the object in the map using the id as index
+        $oid                  = spl_object_hash($entity);
+        $this->nodesMap[$oid] = $entity;
+
+        // If node has been visited before during this persist routine, do nothing
+        if (isset($visited[$oid])) {
+            return;
         }
 
-        return null;
-    }
+        // Set the object as visited in the current persistence routine
+        $visited[$oid] = $entity;
+        $entityState = $this->getEntityState($entity, self::STATE_NEW);
 
-    public function createEntity(Node $node, $className, $id)
-    {
-        /** todo receive a data of object instead of node object */
-        $classMetadata = $this->entityManager->getClassMetadataFor($className);
-        $entity = $this->newInstance($classMetadata, $node);
-        $oid = spl_object_hash($entity);
-        $this->originalEntityData[$oid] = $node->values();
-        $classMetadata->setId($entity, $id);
-        $this->addManaged($entity);
+        switch ($entityState) {
+            case self::STATE_MANAGED:
+                //$this->nodesScheduledForUpdate[$oid] = $entity;
+                break;
+            case self::STATE_NEW:
+                $this->nodesScheduledForCreate[$oid] = $entity;
+                break;
+            case self::STATE_DELETED:
+                throw new \LogicException(sprintf('Node has been deleted'));
+        }
 
-        return $entity;
-    }
-
-    public function createRelationshipEntity(Relationship $relationship, $className, $sourceEntity, $field)
-    {
-        $classMetadata = $this->entityManager->getClassMetadataFor($className);
-        $o = $classMetadata->newInstance();
-        $oid = spl_object_hash($o);
-        $this->originalEntityData[$oid] = $relationship->values();
-        $classMetadata->setId($o, $relationship->identity());
-        $this->addManagedRelationshipEntity($o, $sourceEntity, $field);
-
-        return $o;
+        $this->cascadePersist($entity, $visited);
+        $this->traverseRelationshipEntities($entity, $visited);
     }
 
     /**
-     * This method clones the entity version that was last retrieved from the database in a separate map that keeps
-     * track of last database object version
+     * Cascade persist in node entity relationships by:
+     * 1- Traversing all simple relationship associations
+     * 2- Persisting all relationships
      *
-     * @param $oid
+     * @param       $entity
+     * @param array $visited
+     *
+     * @throws \Exception
      */
-    private function manageEntityReference($oid)
+    private function cascadePersist($entity, array &$visited)
     {
-        // Why not use the hashes? Or nodesScheduledForCreation?
-        // Anyways, just get the object
-        $gid = $this->nodesGIds[$oid];
-        $entity = $this->nodesByGId[$gid];
-
-        // Create a clone of the current object to preserve its state
-        $this->managedNodesVersion[$gid] = clone $entity;
-    }
-
-    private function computeChanges($entityA, $entityB)
-    {
-        $classMetadata = $this->entityManager->getClassMetadataFor(get_class($entityA));
-        $propertyFields = array_merge($classMetadata->getPropertiesMetadata(), $classMetadata->getLabeledProperties());
-        foreach ($propertyFields as $field => $meta) {
-            // force proxy to initialize (only needed with proxy manager 1.x
-            $reflClass = new \ReflectionClass($classMetadata->getClassName());
-            foreach ($reflClass->getMethods() as $method) {
-                if ($method->getNumberOfRequiredParameters() === 0 && $method->getName() === 'getId') {
-                    $entityA->getId();
-                }
-            }
-            $p1 = $meta->getValue($entityA);
-            $p2 = $meta->getValue($entityB);
-            if ($p1 !== $p2) {
-                $this->nodesScheduledForUpdate[spl_object_hash($entityA)] = $entityA;
-            }
-        }
-    }
-
-    private function computeRelationshipEntityPropertiesChanges()
-    {
-        foreach ($this->relationshipEntityStates as $oid => $state) {
-            if ($state === self::STATE_MANAGED) {
-                $e = $this->reEntitiesByGId[$this->reEntitiesGIds[$oid]];
-                $cm = $this->entityManager->getClassMetadataFor(get_class($e));
-                $newValues = $cm->getPropertyValuesArray($e);
-                if (!array_key_exists($oid, $this->reEntitiesOriginalData)) {
-                }
-                $originalValues = $this->reEntitiesOriginalData[$oid];
-                if (count(array_diff($originalValues, $newValues)) > 0) {
-                    $this->relEntitiesScheduledForUpdate[$oid] = $e;
-                }
-            }
-        }
-    }
-
-    private function computeRelationshipEntityChanges($entityA, $entityB)
-    {
-        $classMetadata = $this->entityManager->getRelationshipEntityMetadata(get_class($entityA));
-        foreach ($classMetadata->getPropertiesMetadata() as $meta) {
-            if ($meta->getValue($entityA) !== $meta->getValue($entityB)) {
-                $this->relEntitiesScheduledForUpdate[spl_object_hash($entityA)] = $entityA;
-            }
-        }
-    }
-
-    private function getOriginalRelationshipEntityData($entity)
-    {
+        // Retrieve simple relationships (Non-entity relationships) from class meta data
         $classMetadata = $this->entityManager->getClassMetadataFor(get_class($entity));
+        $associations = $classMetadata->getSimpleRelationships();
 
-        return $classMetadata->getPropertyValuesArray($entity);
+        foreach ($associations as $association) {
+
+            // Get loaded data for the association
+            $value = $association->getValue($entity);
+            if ($value instanceof LazyCollection) {
+
+                // If association is a lazy one, add without fetch
+                $value = $value->getAddWithoutFetch();
+            }
+            if (is_array($value) || $value instanceof ArrayCollection || $value instanceof Collection) {
+
+                // If association is a collection but not lazy, persist all relationships
+                foreach ($value as $assoc) {
+                    $this->persistRelationship($entity, $assoc, $association, $visited);
+                }
+            } else {
+
+                // If association is not a collection at all, just a node
+                $entityB = $association->getValue($entity);
+                if (is_object($entityB)) {
+                    $this->persistRelationship($entity, $entityB, $association, $visited);
+                }
+            }
+        }
     }
 
-    private function removeManaged($entity)
+    /**
+     * This method persists one relationship between two nodes by:
+     * 1- Adding the relationship nodes, metadata, and propery name to the relationshipScheduled for creation
+     * 2- Persisting the nodes at the other end of the relationship recursively
+     *
+     * @param                      $entityA
+     * @param                      $entityB
+     * @param RelationshipMetadata $relationship
+     * @param array                $visited
+     *
+     * @throws \Exception
+     */
+    private function persistRelationship($entityA, $entityB, RelationshipMetadata $relationship, array &$visited)
+    {
+        // Check entityB is a single node or a collection
+        // I don't understand why nodeB would be a collection!
+        // Seems that this is part of the fix to capture updates that happen on relationships
+        if ($entityB instanceof Collection || $entityB instanceof ArrayCollection) {
+            foreach ($entityB as $e) {
+
+                // I really don't understand what's happening here
+                $aMeta = $this->entityManager->getClassMetadataFor(get_class($entityA));
+                $bMeta = $this->entityManager->getClassMetadataFor(get_class($entityB));
+                $type = $relationship->isRelationshipEntity() ? $this->entityManager->getRelationshipEntityMetadata($relationship->getRelationshipEntityClass())->getType() : $relationship->getType();
+                $hashStr = $aMeta->getIdValue($entityA).$bMeta->getIdValue($entityB).$type.$relationship->getDirection();
+                $hash = md5($hashStr);
+
+                // Why are we searching with the hash if we never insert with as index hash?
+                if (!array_key_exists($hash, $this->relationshipsScheduledForCreate)) {
+                    $this->relationshipsScheduledForCreate[] = [$entityA, $relationship, $e, $relationship->getPropertyName()];
+                }
+
+                // Persist recursively for the entityB (the node at the other end of the relationship)
+                $this->doPersist($e, $visited);
+            }
+
+            return;
+        }
+
+        // Persist recursively entityB (the node at the other end of the relationship)
+        $this->doPersist($entityB, $visited);
+
+        // TODO: Make sure that relationship is not ALREADY MANAGED!!!
+        // Add relationship for scheduled for create relationships
+        $this->relationshipsScheduledForCreate[] = [$entityA, $relationship, $entityB, $relationship->getPropertyName()];
+    }
+
+    /**
+     * @param $entity :RelationshipEntity object
+     * @param $pov    :Entity representing node linked to RelationshipEntity
+     */
+    public function persistRelationshipEntity($entity, $pov)
     {
         $oid = spl_object_hash($entity);
-        unset($this->nodesGIds[$oid]);
 
-        $classMetadata = $this->entityManager->getClassMetadataFor(get_class($entity));
-        $id = $classMetadata->getIdValue($entity);
-        if (null === $id) {
-            throw new \LogicException('Entity marked as not managed but could not find identity');
+        if (!array_key_exists($oid, $this->relationshipEntityStates)) {
+            $this->relEntitiesScheduledForCreate[$oid] = [$entity, $pov];
+            $this->relationshipEntityStates[$oid] = self::STATE_NEW;
         }
-        unset($this->nodesByGId[$id]);
     }
 
     /**
@@ -1355,6 +968,305 @@ class UnitOfWork
         }
     }
 
+    /**
+     * This method traverses relationship entities doing the following:
+     * 1- Loop over all relationship entities linked to the node
+     * 2- Persist all relationship entities
+     * 3- Persist the node on the other end of the relationship entity
+     *
+     * @param       $entity
+     * @param array $visited
+     *
+     * @throws \Exception
+     */
+    private function traverseRelationshipEntities($entity, array &$visited = [])
+    {
+        // Loop over all relationship entities tied to the node entity
+        $classMetadata = $this->entityManager->getClassMetadataFor(get_class($entity));
+        foreach ($classMetadata->getRelationshipEntities() as $relationshipMetadata) {
+            $value = $relationshipMetadata->getValue($entity);
+
+            // Skip empty relationship entities
+            if (null === $value || ($relationshipMetadata->isCollection() && count($value) === 0)) {
+                continue;
+            }
+            if ($relationshipMetadata->isCollection()) {
+                foreach ($value as $v) {
+
+                    // Persist relationship entity
+                    $this->persistRelationshipEntity($v, get_class($entity));
+
+                    // Get property that maps to the node at the other ned of the relationship
+                    // My guess is that this: persists recursively entityB (the node at the other end of the relationship)
+                    $rem = $this->entityManager->getRelationshipEntityMetadata(get_class($v));
+                    $toPersistProperty = $rem->getStartNode() === $classMetadata->getClassName() ? $rem->getEndNodeValue($v) : $rem->getStartNodeValue($v);
+                    $this->doPersist($toPersistProperty, $visited);
+                }
+            } else {
+
+                // Persist relationship entity
+                $this->persistRelationshipEntity($value, get_class($entity));
+
+                // Get property that maps to the node at the other ned of the relationship
+                // My guess is that this: persists recursively entityB (the node at the other end of the relationship)
+                $rem = $this->entityManager->getRelationshipEntityMetadata(get_class($value));
+                $toPersistProperty = $rem->getStartNode() === $classMetadata->getClassName() ? $rem->getEndNodeValue($value) : $rem->getStartNodeValue($value);
+                $this->doPersist($toPersistProperty, $visited);
+            }
+        }
+    }
+
+    //------------------------------------------------------------------------------------------------------------------
+    //------------------------------------------------------------------------------------------------------------------
+    //------------------------------------------------------------------------------------------------------------------
+
+    /**
+     * @throws \Exception
+     */
+    private function detectEntityChanges()
+    {
+        foreach ($this->entityStates as $oid => $state) {
+            if ($state === self::STATE_MANAGED) {
+
+                // Retrieve new entity version
+                $gid = $this->nodesGIds[$oid];
+                $entityA = $this->nodesByGId[$gid];
+                $visited = [];
+
+                // Why do we need to do this?? If it is managed it will simply return
+                $this->doPersist($entityA, $visited);
+
+                // Retrieve managed entity version
+                $entityB = $this->managedNodesVersion[$gid];
+
+                // Compute changes according to changes between both version, and mark nodes as scheduled for updates
+                // accordingly
+                $this->computeChanges($entityA, $entityB);
+            }
+        }
+    }
+
+    /**
+     * @param $entityA
+     * @param $entityB
+     *
+     * @throws \ReflectionException
+     */
+    private function computeChanges($entityA, $entityB)
+    {
+        $classMetadata = $this->entityManager->getClassMetadataFor(get_class($entityA));
+        $propertyFields = array_merge($classMetadata->getPropertiesMetadata(), $classMetadata->getLabeledProperties());
+        foreach ($propertyFields as $field => $meta) {
+            // force proxy to initialize (only needed with proxy manager 1.x
+            $reflClass = new \ReflectionClass($classMetadata->getClassName());
+            foreach ($reflClass->getMethods() as $method) {
+                if ($method->getNumberOfRequiredParameters() === 0 && $method->getName() === 'getId') {
+                    $entityA->getId();
+                }
+            }
+            $p1 = $meta->getValue($entityA);
+            $p2 = $meta->getValue($entityB);
+            if ($p1 !== $p2) {
+                $this->nodesScheduledForUpdate[spl_object_hash($entityA)] = $entityA;
+            }
+        }
+    }
+
+    /**
+     *
+     */
+    private function detectRelationshipReferenceChanges()
+    {
+        foreach ($this->managedRelsRefs as $oid => $reference) {
+            $entity = $this->nodesByGId[$this->nodesGIds[$oid]];
+            foreach ($reference as $field => $info) {
+                /** @var RelationshipMetadata $relMeta */
+                $relMeta = $info[0]['rel'];
+                $value = $relMeta->getValue($entity);
+                if ($value instanceof ArrayCollection || $value instanceof AbstractLazyCollection) {
+                    $value = $value->toArray();
+                }
+                if (is_array($value)) {
+                    $currentValue = array_map(function ($ref) {
+                        return $this->nodesByGId[$this->nodesGIds[$ref['target']]];
+                    }, $info);
+
+                    $compare = function ($a, $b) {
+                        if ($a === $b) {
+                            return 0;
+                        }
+
+                        return $a < $b ? -1 : 1;
+                    };
+
+                    $added = array_udiff($value, $currentValue, $compare);
+                    $removed = array_udiff($currentValue, $value, $compare);
+
+                    foreach ($added as $add) {
+                        // Since this is the same property, it should be ok to re-use the first relationship
+                        $this->scheduleRelationshipReferenceForCreate($entity, $add, $info[0]['rel']);
+                    }
+                    foreach ($removed as $remove) {
+                        $this->scheduleRelationshipReferenceForDelete($entity, $remove, $info[0]['rel']);
+                    }
+                } elseif (is_object($value)) {
+                    $target = $this->nodesByGId[$this->nodesGIds[$info[0]['target']]];
+                    if ($value !== $target) {
+                        $this->scheduleRelationshipReferenceForDelete($entity, $target, $info[0]['rel']);
+                        $this->scheduleRelationshipReferenceForCreate($entity, $value, $info[0]['rel']);
+                    }
+                } elseif ($value === null) {
+                    foreach ($info as $ref) {
+                        $target = $this->nodesByGId[$this->nodesGIds[$ref['target']]];
+                        $this->scheduleRelationshipReferenceForDelete($entity, $target, $ref['rel']);
+                    }
+                }
+            }
+        }
+
+    }
+
+    /**
+     *
+     */
+    private function detectRelationshipEntityChanges()
+    {
+        $managed = [];
+        foreach ($this->relationshipEntityStates as $oid => $state) {
+            if ($state === self::STATE_MANAGED) {
+                $managed[] = $oid;
+            }
+        }
+
+        foreach ($managed as $oid) {
+            $reA = $this->relEntitiesByGId[$this->relEntitiesGIds[$oid]];
+            $reB = $this->managedRelEntitiesVersion[$this->relEntitiesGIds[$oid]];
+            $this->computeRelationshipEntityChanges($reA, $reB);
+//            $this->checkRelationshipEntityDeletions($reA);
+        }
+    }
+
+    /**
+     * @param $entityA
+     * @param $entityB
+     *
+     * @throws \Exception
+     */
+    private function computeRelationshipEntityChanges($entityA, $entityB)
+    {
+        $classMetadata = $this->entityManager->getRelationshipEntityMetadata(get_class($entityA));
+        foreach ($classMetadata->getPropertiesMetadata() as $meta) {
+            if ($meta->getValue($entityA) !== $meta->getValue($entityB)) {
+                $this->relEntitiesScheduledForUpdate[spl_object_hash($entityA)] = $entityA;
+            }
+        }
+    }
+
+    /**
+     *
+     */
+    private function computeRelationshipEntityPropertiesChanges()
+    {
+        foreach ($this->relationshipEntityStates as $oid => $state) {
+            if ($state === self::STATE_MANAGED) {
+                $e = $this->relEntitiesByGId[$this->relEntitiesGIds[$oid]];
+                $cm = $this->entityManager->getClassMetadataFor(get_class($e));
+                $newValues = $cm->getPropertyValuesArray($e);
+                if (!array_key_exists($oid, $this->reEntitiesOriginalData)) {
+                }
+                $originalValues = $this->reEntitiesOriginalData[$oid];
+                if (count(array_diff($originalValues, $newValues)) > 0) {
+                    $this->relEntitiesScheduledForUpdate[$oid] = $e;
+                }
+            }
+        }
+    }
+
+    /**
+     * @param                      $entity
+     * @param                      $target
+     * @param RelationshipMetadata $relationship
+     */
+    private function scheduleRelationshipReferenceForCreate($entity, $target, RelationshipMetadata $relationship)
+    {
+        $this->relationshipsScheduledForCreate[] = [$entity, $relationship, $target, $relationship->getPropertyName()];
+    }
+
+    /**
+     * @param                      $entity
+     * @param                      $target
+     * @param RelationshipMetadata $relationship
+     */
+    private function scheduleRelationshipReferenceForDelete($entity, $target, RelationshipMetadata $relationship)
+    {
+        $this->relationshipsScheduledForDelete[] = [$entity, $relationship, $target, $relationship->getPropertyName()];
+    }
+
+    //------------------------------------------------------------------------------------------------------------------
+    //------------------------------------------------------------------------------------------------------------------
+    //------------------------------------------------------------------------------------------------------------------
+
+    /**
+     * @param $entity
+     */
+    private function addManaged($entity)
+    {
+        $oid = spl_object_hash($entity);
+        $classMetadata = $this->entityManager->getClassMetadataFor(get_class($entity));
+        $id = $classMetadata->getIdValue($entity);
+        if (null === $id) {
+            throw new \LogicException('Entity marked for managed but could not find identity');
+        }
+        $this->entityStates[$oid] = self::STATE_MANAGED;
+        $this->nodesGIds[$oid]    = $id;
+        $this->nodesByGId[$id]    = $entity;
+        $this->manageEntityReference($oid);
+    }
+
+    /**
+     * @param $entity
+     * @param $pointOfView
+     * @param $field
+     *
+     * @throws \Exception
+     */
+    private function addManagedRelationshipEntity($entity, $pointOfView, $field)
+    {
+        $id                                                 = $this->entityManager->getRelationshipEntityMetadata(get_class($entity))->getIdValue($entity);
+        $oid                                                = spl_object_hash($entity);
+        $this->relationshipEntityStates[$oid]               = self::STATE_MANAGED;
+        $ref                                                = clone $entity;
+        $this->relEntitiesByGId[$id]                        = $entity;
+        $this->relEntitiesGIds[$oid]                        = $id;
+        $this->managedRelEntitiesVersion[$id]               = $ref;
+        $poid                                               = spl_object_hash($pointOfView);
+        $this->managedRelationshipEntities[$poid][$field][] = $oid;
+        $this->managedRelationshipEntitiesMap[$oid][$poid]  = $field;
+        $this->reEntitiesOriginalData[$oid]                 = $this->getOriginalRelationshipEntityData($entity);
+    }
+
+    /**
+     * @param $entity
+     */
+    private function removeManaged($entity)
+    {
+        $oid = spl_object_hash($entity);
+        unset($this->nodesGIds[$oid]);
+
+        $classMetadata = $this->entityManager->getClassMetadataFor(get_class($entity));
+        $id = $classMetadata->getIdValue($entity);
+        if (null === $id) {
+            throw new \LogicException('Entity marked as not managed but could not find identity');
+        }
+        unset($this->nodesByGId[$id]);
+    }
+
+    /**
+     * @param NodeEntityMetadata $class
+     * @param Node               $node
+     *
+     * @return mixed|object
+     */
     private function newInstance(NodeEntityMetadata $class, Node $node)
     {
         $proxyFactory = $this->entityManager->getProxyFactory($class);
@@ -1362,6 +1274,135 @@ class UnitOfWork
         return $proxyFactory->fromNode($node);
     }
 
+    //------------------------------------------------------------------------------------------------------------------
+    //------------------------------------------------------------------------------------------------------------------
+    //------------------------------------------------------------------------------------------------------------------
+
+    /**
+     * @param $oid
+     * @param $gid
+     */
+    private function hydrateGraphId($oid, $gid)
+    {
+        $refl0 = new \ReflectionObject($this->nodesScheduledForCreate[$oid]);
+        $p = $refl0->getProperty('id');
+        $p->setAccessible(true);
+        $p->setValue($this->nodesScheduledForCreate[$oid], $gid);
+    }
+
+    /**
+     * @param $oid
+     * @param $gid
+     */
+    private function hydrateRelationshipEntityId($oid, $gid)
+    {
+        $refl0 = new \ReflectionObject($this->relEntitiesScheduledForCreate[$oid][0]);
+        $p = $refl0->getProperty('id');
+        $p->setAccessible(true);
+        $p->setValue($this->relEntitiesScheduledForCreate[$oid][0], $gid);
+        $this->relEntitiesGIds[$oid]           = $gid;
+        $this->relEntitiesByGId[$gid]          = $this->relEntitiesScheduledForCreate[$oid][0];
+        $this->managedRelEntitiesVersion[$gid] = clone $this->relEntitiesScheduledForCreate[$oid][0];
+        $this->reEntitiesOriginalData[$oid]    = $this->getOriginalRelationshipEntityData($this->relEntitiesScheduledForCreate[$oid][0]);
+    }
+
+    /**
+     * @param $class
+     *
+     * @return Persister\EntityPersister
+     */
+    private function getPersister($class)
+    {
+        if (!array_key_exists($class, $this->nodePersisters)) {
+            $classMetadata                = $this->entityManager->getClassMetadataFor($class);
+            $this->nodePersisters[$class] = new EntityPersister($this->entityManager, $class, $classMetadata);
+        }
+
+        return $this->nodePersisters[$class];
+    }
+
+    /**
+     * @param $class
+     *
+     * @return \GraphAware\Neo4j\OGM\Persister\RelationshipEntityPersister
+     * @throws \Exception
+     */
+    private function getRelationshipEntityPersister($class)
+    {
+        if (!array_key_exists($class, $this->relationshipEntityPersisters)) {
+            $classMetadata = $this->entityManager->getRelationshipEntityMetadata($class);
+            $this->relationshipEntityPersisters[$class] = new RelationshipEntityPersister($this->entityManager, $class, $classMetadata);
+        }
+
+        return $this->relationshipEntityPersisters[$class];
+    }
+
+    /**
+     * This method clones the entity version that was last retrieved from the database in a separate map that keeps
+     * track of last database object version
+     *
+     * @param $oid
+     */
+    private function manageEntityReference($oid)
+    {
+        // Why not use the hashes? Or nodesScheduledForCreation?
+        // Anyways, just get the object
+        $gid = $this->nodesGIds[$oid];
+        $entity = $this->nodesByGId[$gid];
+
+        // Create a clone of the current object to preserve its state
+        $this->managedNodesVersion[$gid] = clone $entity;
+    }
+
+    /**
+     * @param $entity
+     *
+     * @return array
+     */
+    private function getOriginalRelationshipEntityData($entity)
+    {
+        $classMetadata = $this->entityManager->getClassMetadataFor(get_class($entity));
+
+        return $classMetadata->getPropertyValuesArray($entity);
+    }
+
+    /**
+     * @param      $entity
+     * @param null $assumedState
+     *
+     * @return mixed|null|string
+     */
+    private function getEntityState($entity, $assumedState = null)
+    {
+        $oid = spl_object_hash($entity);
+
+        // Check if object already has a state
+        if (isset($this->entityStates[$oid])) {
+            return $this->entityStates[$oid];
+        }
+
+        // Return assumed state as the object's state if it doesn't exist in the UoW's tracked entity states
+        if (null !== $assumedState) {
+            return $assumedState;
+        }
+
+        // Attempt to retrieve object id from its meta data
+        $id = $this->entityManager->getClassMetadataFor(get_class($entity))->getIdValue($entity);
+
+        // If object doesn't have an id (yet), then it's new
+        if (!$id) {
+            return self::STATE_NEW;
+        }
+
+        // If the object doesn't have a state in the tracked entity states, but does have an id value, then it's detached
+        return self::STATE_DETACHED;
+    }
+
+    /**
+     * @param $entity
+     *
+     * @return bool
+     */
     private function isNodeEntity($entity)
     {
         $meta = $this->entityManager->getClassMetadataFor(get_class($entity));
@@ -1369,6 +1410,11 @@ class UnitOfWork
         return $meta instanceof NodeEntityMetadata;
     }
 
+    /**
+     * @param $entity
+     *
+     * @return bool
+     */
     private function isRelationshipEntity($entity)
     {
         $meta = $this->entityManager->getClassMetadataFor(get_class($entity));
