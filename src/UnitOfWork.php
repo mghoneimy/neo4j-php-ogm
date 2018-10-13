@@ -577,8 +577,11 @@ class UnitOfWork
      */
     public function addManagedRelationshipReference($entityA, $entityB, $field, RelationshipMetadata $relationship)
     {
+
         $aoid                                   = spl_object_hash($entityA);
         $boid                                   = spl_object_hash($entityB);
+
+        // TODO: Check if relationship is already managed
         $this->managedRelsRefs[$aoid][$field][] = [
             'entity' => $aoid,
             'target' => $boid,
@@ -777,12 +780,20 @@ class UnitOfWork
             return;
         }
 
-        // Persist recursively entityB (the node at the other end of the relationship)
-        $this->doPersist($entityB, $visited);
+        // Check if relationship is already managed
+        $aoid = spl_object_hash($entityA);
+        $propertyName = $relationship->getPropertyName();
+        if (!empty($this->managedRelsRefs[$aoid][$propertyName])) {
 
-        // TODO: Make sure that relationship is not ALREADY MANAGED!!!
-        // Add relationship for scheduled for create relationships
-        $this->relationshipsScheduledForCreate[] = [$entityA, $relationship, $entityB, $relationship->getPropertyName()];
+            // Persist recursively entityB (the node at the other end of the relationship) and schedule rel for create
+            $this->doPersist($entityB, $visited);
+            $this->relationshipsScheduledForCreate[] = [
+                $entityA,
+                $relationship,
+                $entityB,
+                $relationship->getPropertyName()
+            ];
+        }
     }
 
     /**
@@ -1168,6 +1179,8 @@ class UnitOfWork
     private function addManaged($entity)
     {
         $oid = spl_object_hash($entity);
+
+        // TODO: Check if entity is already managed
         $classMetadata = $this->entityManager->getClassMetadataFor(get_class($entity));
         $id = $classMetadata->getIdValue($entity);
         if (null === $id) {

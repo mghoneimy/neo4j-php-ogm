@@ -86,7 +86,18 @@ class EntityHydrator
                 $targetRel->setValue($o, $sourceEntity);
             }
         }
-        $this->_em->getUnitOfWork()->addManagedRelationshipReference($sourceEntity, $o, $relationshipMetadata->getPropertyName(), $relationshipMetadata);
+        $this->_em->getUnitOfWork()->addManagedRelationshipReference(
+            $sourceEntity,
+            $o,
+            $relationshipMetadata->getPropertyName(),
+            $relationshipMetadata
+        );
+        $this->_em->getUnitOfWork()->addManagedRelationshipReference(
+            $o,
+            $sourceEntity,
+            $mappedBy,
+            $targetMeta->getRelationship($mappedBy)
+        );
     }
 
     public function hydrateSimpleRelationshipCollection($alias, Result $dbResult, $sourceEntity)
@@ -105,12 +116,22 @@ class EntityHydrator
             if ($mappedBy) {
                 $mappedRel = $targetMeta->getRelationship($mappedBy);
                 if ($mappedRel->isCollection()) {
-                    $mappedRel->initializeCollection($item);
-                    $this->_em->getUnitOfWork()->addManagedRelationshipReference($sourceEntity, $item, $relationshipMetadata->getPropertyName(), $relationshipMetadata);
+                    $mappedRel->addToCollection($item, $sourceEntity);
                 } else {
                     $mappedRel->setValue($item, $sourceEntity);
-                    $this->_em->getUnitOfWork()->addManagedRelationshipReference($sourceEntity, $item, $relationshipMetadata->getPropertyName(), $relationshipMetadata);
                 }
+                $this->_em->getUnitOfWork()->addManagedRelationshipReference(
+                    $sourceEntity,
+                    $item,
+                    $relationshipMetadata->getPropertyName(),
+                    $relationshipMetadata
+                );
+                $this->_em->getUnitOfWork()->addManagedRelationshipReference(
+                    $item,
+                    $sourceEntity,
+                    $mappedBy,
+                    $mappedRel
+                );
             }
         }
     }
