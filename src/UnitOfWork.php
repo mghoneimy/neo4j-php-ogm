@@ -172,10 +172,11 @@ class UnitOfWork
     /**
      * This map stores a reference to the relationships managed by the UoW against the hashed object id of the first
      * node and the property name of the relationship
-     * [aoid][propertyName] -> ['entity' => aoid, 'target' => boid, 'rel' => RelationshipMetaData]
+     * [aoid][propertyName] -> [['entity' => aoid, 'target' => boid, 'rel' => RelationshipMetaData]]
      *
      * @var array
      */
+    // TODO: Modify the way data is stored from array of structures to a structure
     private $managedRelsRefs = [];
 
     /**
@@ -577,18 +578,19 @@ class UnitOfWork
      */
     public function addManagedRelationshipReference($entityA, $entityB, $field, RelationshipMetadata $relationship)
     {
+        $aoid = spl_object_hash($entityA);
+        $boid = spl_object_hash($entityB);
 
-        $aoid                                   = spl_object_hash($entityA);
-        $boid                                   = spl_object_hash($entityB);
-
-        // TODO: Check if relationship is already managed
-        $this->managedRelsRefs[$aoid][$field][] = [
-            'entity' => $aoid,
-            'target' => $boid,
-            'rel' => $relationship,
-        ];
-        $this->addManaged($entityA);
-        $this->addManaged($entityB);
+        // Only add relationship as managed if it's not already
+        if (!empty($this->managedRelsRefs[$aoid][$field])) {
+            $this->managedRelsRefs[$aoid][$field][] = [
+                'entity' => $aoid,
+                'target' => $boid,
+                'rel' => $relationship,
+            ];
+            $this->addManaged($entityA);
+            $this->addManaged($entityB);
+        }
     }
 
     /**
@@ -1180,16 +1182,18 @@ class UnitOfWork
     {
         $oid = spl_object_hash($entity);
 
-        // TODO: Check if entity is already managed
-        $classMetadata = $this->entityManager->getClassMetadataFor(get_class($entity));
-        $id = $classMetadata->getIdValue($entity);
-        if (null === $id) {
-            throw new \LogicException('Entity marked for managed but could not find identity');
+        // Only add node as managed if it's not already
+        if (!empty($entityState = $this->entityStates[$oid]) && $entityState !== self::STATE_MANAGED) {
+            $classMetadata = $this->entityManager->getClassMetadataFor(get_class($entity));
+            $id = $classMetadata->getIdValue($entity);
+            if (null === $id) {
+                throw new \LogicException('Entity marked for managed but could not find identity');
+            }
+            $this->entityStates[$oid] = self::STATE_MANAGED;
+            $this->nodesGIds[$oid]    = $id;
+            $this->nodesByGId[$id]    = $entity;
+            $this->manageEntityReference($oid);
         }
-        $this->entityStates[$oid] = self::STATE_MANAGED;
-        $this->nodesGIds[$oid]    = $id;
-        $this->nodesByGId[$id]    = $entity;
-        $this->manageEntityReference($oid);
     }
 
     /**
