@@ -40,7 +40,7 @@ class BasicEntityPersister
      */
     public function load(array $criteria, array $orderBy = null)
     {
-        $stmt = $this->getMatchCypher($criteria, $orderBy);
+        $stmt = $this->getMatchCypher($criteria, $orderBy, 1);
         $result = $this->_em->getDatabaseDriver()->run($stmt->text(), $stmt->parameters());
 
         if ($result->size() > 1) {
