@@ -203,45 +203,6 @@ class UnitOfWork
     //------------------------------------------------------------------------------------------------------------------
 
     /**
-     * This map stores entities objects against their hashed object id's, it serves as the identity map for the UoW
-     * [oid] -> Entity object
-     *
-     * @var array
-     */
-    // TODO: Remove this, it's pointless, not getting read anywhere
-    private $nodesMap = [];
-
-    /**
-     * I really don't know what this is. It seems to storeoriginal node data, but then it also stores rel entity data
-     * And most importantly, it's being used anywhere for retrieval, hence is useless
-     *
-     * @var array
-     */
-    // TODO: Remove this attribute with all its references
-    private $originalEntityData = [];
-
-    /**
-     * This attribute does't seem useful for the most part, it's just getting set whenever a new RelEntity is created
-     * Not being check3e at any point of te code
-     *
-     * @var array
-     */
-    // TODO: Get rid of this
-    private $managedRelationshipEntities = [];
-
-    /**
-     * This attribute does't seem useful for the most part, it's just getting set whenever a new RelEntity is created
-     * Not being check3e at any point of te code
-     *
-     * @var array
-     */
-    // TODO: Get rid of this
-    private $managedRelationshipEntitiesMap = [];
-
-    //------------------------------------------------------------------------------------------------------------------
-    //------------------------------------------------------------------------------------------------------------------
-
-    /**
      * This map stores node objects against their hashed object id's for the nodes that will get created
      * [oid] -> Entity object
      *
@@ -582,7 +543,6 @@ class UnitOfWork
         $classMetadata = $this->entityManager->getClassMetadataFor($className);
         $entity = $this->newInstance($classMetadata, $node);
         $oid = spl_object_hash($entity);
-        $this->originalEntityData[$oid] = $node->values();
         $classMetadata->setId($entity, $id);
         $this->addManaged($entity);
 
@@ -603,7 +563,6 @@ class UnitOfWork
         $classMetadata = $this->entityManager->getClassMetadataFor($className);
         $o = $classMetadata->newInstance();
         $oid = spl_object_hash($o);
-        $this->originalEntityData[$oid] = $relationship->values();
         $classMetadata->setId($o, $relationship->identity());
         $this->addManagedRelationshipEntity($o, $sourceEntity, $field);
 
@@ -712,11 +671,8 @@ class UnitOfWork
      */
     private function doPersist($entity, array &$visited)
     {
-        // Calculates object hashed id and save the object in the map using the id as index
+        // Calculates object hashed id and check if node has been visited before during this persist routine, do nothing
         $oid                  = spl_object_hash($entity);
-        $this->nodesMap[$oid] = $entity;
-
-        // If node has been visited before during this persist routine, do nothing
         if (isset($visited[$oid])) {
             return;
         }
@@ -1240,8 +1196,6 @@ class UnitOfWork
         $this->relEntitiesGIds[$oid]                        = $id;
         $this->managedRelEntitiesVersion[$id]               = $ref;
         $poid                                               = spl_object_hash($pointOfView);
-        $this->managedRelationshipEntities[$poid][$field][] = $oid;
-        $this->managedRelationshipEntitiesMap[$oid][$poid]  = $field;
         $this->reEntitiesOriginalData[$oid]                 = $this->getOriginalRelationshipEntityData($entity);
     }
 
