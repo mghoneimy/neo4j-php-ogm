@@ -55,7 +55,7 @@ class LazyCollection extends AbstractLazyCollection
         $this->collection = new Collection($this->added);
     }
 
-    public function add($element, $andFetch = true)
+    public function add($element, $andFetch = false)
     {
         $this->added[] = $element;
         if (!$andFetch) {
