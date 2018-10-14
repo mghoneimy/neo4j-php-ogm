@@ -580,7 +580,7 @@ class UnitOfWork
         $boid = spl_object_hash($entityB);
 
         // Only add relationship as managed if it's not already
-        if (!empty($this->managedRelsRefs[$aoid][$field])) {
+        if (empty($this->managedRelsRefs[$aoid][$field])) {
             $this->managedRelsRefs[$aoid][$field][] = [
                 'entity' => $aoid,
                 'target' => $boid,
@@ -780,10 +780,10 @@ class UnitOfWork
             return;
         }
 
-        // Check if relationship is already managed
+        // Only persist relationship if it appeared for the first time
         $aoid = spl_object_hash($entityA);
         $propertyName = $relationship->getPropertyName();
-        if (!empty($this->managedRelsRefs[$aoid][$propertyName])) {
+        if (empty($this->managedRelsRefs[$aoid][$propertyName])) {
 
             // Persist recursively entityB (the node at the other end of the relationship) and schedule rel for create
             $this->doPersist($entityB, $visited);
@@ -1181,7 +1181,7 @@ class UnitOfWork
         $oid = spl_object_hash($entity);
 
         // Only add node as managed if it's not already
-        if (!empty($entityState = $this->entityStates[$oid]) && $entityState !== self::STATE_MANAGED) {
+        if (empty($this->entityStates[$oid]) || $this->entityStates[$oid] !== self::STATE_MANAGED) {
             $classMetadata = $this->entityManager->getClassMetadataFor(get_class($entity));
             $id = $classMetadata->getIdValue($entity);
             if (null === $id) {
