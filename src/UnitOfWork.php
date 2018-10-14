@@ -543,9 +543,7 @@ class UnitOfWork
         /** todo receive a data of object instead of node object */
         $classMetadata = $this->entityManager->getClassMetadataFor($className);
         $entity = $this->newInstance($classMetadata, $node);
-        $oid = spl_object_hash($entity);
         $classMetadata->setId($entity, $id);
-        $this->addManaged($entity);
 
         return $entity;
     }
@@ -1178,7 +1176,7 @@ class UnitOfWork
     /**
      * @param $entity
      */
-    private function addManaged($entity)
+    public function addManaged($entity)
     {
         $oid = spl_object_hash($entity);
 

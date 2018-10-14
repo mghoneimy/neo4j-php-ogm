@@ -263,6 +263,7 @@ class EntityHydrator
                 $entity = $this->_em->getUnitOfWork()->createEntity($node, $entityName, $id);
                 $this->hydrateProperties($entity, $node);
                 $this->hydrateLabels($entity, $node);
+                $this->_em->getUnitOfWork()->addManaged($entity);
 
                 $result[] = $entity;
             }
@@ -283,6 +284,7 @@ class EntityHydrator
         $entity = $this->_em->getUnitOfWork()->createEntity($node, $cm, $id);
         $this->hydrateProperties($entity, $node);
         $this->hydrateLabels($entity, $node);
+        $this->_em->getUnitOfWork()->addManaged($entity);
 
         return $entity;
     }
