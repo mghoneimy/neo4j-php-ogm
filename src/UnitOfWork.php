@@ -992,13 +992,13 @@ class UnitOfWork
      */
     private function detectEntityChanges()
     {
+        $visited = [];
         foreach ($this->entityStates as $oid => $state) {
             if ($state === self::STATE_MANAGED) {
 
                 // Retrieve new entity version
                 $gid = $this->nodesGIds[$oid];
                 $entityA = $this->nodesByGId[$gid];
-                $visited = [];
 
                 // Why do we need to do this?? If it is managed it will simply return
                 $this->doPersist($entityA, $visited);
