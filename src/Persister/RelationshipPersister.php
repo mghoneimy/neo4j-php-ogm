@@ -38,7 +38,7 @@ class RelationshipPersister
 
         $relStringPart = sprintf($relString, $relationship->getType());
 
-        $query = 'MATCH (a), (b) WHERE id(a) = {ida} AND id(b) = {idb}
+        $query = 'MATCH (a) WHERE id(a) = {ida} WITH a MATCH (b) WHERE id(b) = {idb}
         MERGE (a)'.$relStringPart.'(b)
         RETURN id(r)';
 
@@ -63,7 +63,7 @@ class RelationshipPersister
 
         $relStringPart = sprintf($relString, $relationship->getType());
 
-        $query = 'MATCH (a), (b) WHERE id(a) = {ida} AND id(b) = {idb}
+        $query = 'MATCH (a) WHERE id(a) = {ida} WITH a MATCH (b) WHERE id(b) = {idb}
         MATCH (a)'.$relStringPart.'(b)
         DELETE r';
 
