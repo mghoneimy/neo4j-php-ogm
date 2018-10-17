@@ -91,5 +91,12 @@ class LazyCollection extends AbstractLazyCollection
         return $this->initialCount + count($this->collection);
     }
 
-
+    /**
+     * @return array
+     */
+    public function toArray()
+    {
+        // Returned the added objects to the collection without fetch from DB
+        return $this->getAddWithoutFetch();
+    }
 }
